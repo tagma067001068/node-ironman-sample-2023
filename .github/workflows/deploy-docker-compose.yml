@@ -1,0 +1,54 @@
+name: Deploy to Portainer
+
+on:
+  push:
+    branches:
+      - feature/action-docker-traefik
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v1
+      with:
+        username: ${{ secrets.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v2
+      with:
+        context: .
+        tags: ${{ secrets.DOCKER_HUB_USERNAME }}/ironman-app-2023-mongo-amd64:latest
+        push: true
+
+    - name: Install SSH key  # 第二步，安裝 SSH 密鑰
+      uses: webfactory/ssh-agent@v0.5.3  # 使用第三方的 ssh-agent 動作
+      with:
+        ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}  # 從 GitHub Secrets 中取得私鑰
+
+    - name: Update known_hosts
+      run: |
+        mkdir -p ~/.ssh
+        ssh-keyscan ${{secrets.HOST_NAME}} >> ~/.ssh/known_hosts
+
+    - name: Create and transfer .env file to remote server
+      run: |
+        echo "Creating .env file"
+        echo MONGO_ROOT_USERNAME="${{ secrets.MONGO_ROOT_USERNAME }}" > .env
+        echo MONGO_ROOT_PASSWORD="${{ secrets.MONGO_ROOT_PASSWORD }}" >> .env
+        echo VARIABLE=${{ secrets.ENV_VARIABLE }} >> .env
+
+        echo "Transferring .env file to remote server"
+        scp .env root@${{ secrets.HOST_NAME }}:/root/.env
+
+    - name: Upload docker-compose.yml to remote server
+      run: |
+        scp ./docker-compose.yml root@${{ secrets.HOST_NAME }}:/root/docker-compose.yml
+
+    - name: run docker-compose.yml
+      run: |
+        ssh root@${{ secrets.HOST_NAME }} "docker-compose --env-file /root/.env -f /root/docker-compose.yml up -d"
